@@ -369,7 +369,17 @@ class ProtocolBase(collections.abc.MutableMapping):
                     ):
                         null_type = True
                         break
-
+            elif "anyOf" in propinfo:
+                for o in propinfo["anyOf"]:
+                    type_info = o.get("type")
+                    if (
+                        type_info
+                        and type_info == "null"
+                        or isinstance(type_info, (list, tuple))
+                        and "null" in type_info
+                    ):
+                        null_type = True
+                        break
             if (propname(x) not in self._properties and null_type) or (
                 self._properties[propname(x)] is None and not null_type
             ):
@@ -503,8 +513,12 @@ class ClassBuilder(object):
     def _construct(self, uri, clsdata, parent=(ProtocolBase,), **kw):
 
         if "anyOf" in clsdata:
-            raise NotImplementedError("anyOf is not supported as bare property")
-
+            klasses = self.construct_objects(clsdata["oneOf"], uri)
+            logger.debug(
+                util.lazy_format("Designating {0} as TypeProxy for {1}", uri, klasses)
+            )
+            self.resolved[uri] = TypeProxy(klasses, title=clsdata.get("title"))
+            return self.resolved[uri]
         elif "oneOf" in clsdata:
             """If this object itself has a 'oneOf' designation,
             then construct a TypeProxy.
@@ -679,6 +693,14 @@ class ClassBuilder(object):
                 desc = detail["description"] if "description" in detail else ""
                 props[prop] = make_property(prop, {"type": potential}, desc)
 
+            elif "anyOf" in detail:
+                potential = self.expand_references(nm, detail["anyOf"])
+                logger.debug(
+                    util.lazy_format("Designating {0} as anyOf {1}", prop, potential)
+                )
+                desc = detail["description"] if "description" in detail else ""
+                props[prop] = make_property(prop, {"type": potential}, desc)
+
             elif "type" in detail and detail["type"] == "array":
                 if "items" in detail and isinstance(detail["items"], dict):
                     if "$ref" in detail["items"]:
@@ -699,6 +721,12 @@ class ClassBuilder(object):
                                 typ = TypeProxy(
                                     self.construct_objects(
                                         detail["items"]["oneOf"], uri
+                                    )
+                                )
+                            elif "anyOf" in detail["items"]:
+                                typ = TypeProxy(
+                                    self.construct_objects(
+                                        detail["items"]["anyOf"], uri
                                     )
                                 )
                             else:
